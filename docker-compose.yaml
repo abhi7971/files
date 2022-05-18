@@ -1,0 +1,73 @@
+version: '2.2'
+
+volumes:
+  mediaprocessing_public_vol:
+
+services:
+  artis-nodejs-mediaprocessing-dev:
+    image: docker.indianic.com/artisacademy/nodejs-mediaprocessing-dev:latest
+    container_name: artis-nodejs-mediaprocessing-dev
+    ports:
+    - 5004:5004
+    volumes:
+    - mediaprocessing_public_vol:/usr/src/app/public        
+
+  artis-nodejs-order-dev:
+    image: docker.indianic.com/artisacademy/nodejs-order-dev:latest
+    container_name: artis-nodejs-order-dev
+    ports:
+    - 4058:4058
+
+  artis-nodejs-notification-dev:
+    image: docker.indianic.com/artisacademy/nodejs-notification-dev:latest
+    container_name: artis-nodejs-notification-dev
+    ports:
+    - 5005:5005
+
+  artis-nodejs-course-dev:
+    image: docker.indianic.com/artisacademy/nodejs-course-dev:latest
+    container_name: artis-nodejs-course-dev
+    ports:
+    - 4055:4055
+
+  artis-nodejs-community-dev:
+    image: docker.indianic.com/artisacademy/nodejs-community-dev:latest
+    container_name: artis-nodejs-community-dev
+    ports:
+    - 4054:4054
+
+  artis-nodejs-auth-dev:
+    image: docker.indianic.com/artisacademy/nodejs-auth-dev:latest
+    container_name: artis-nodejs-auth-dev
+    ports:
+    - 4053:4053
+
+  artis-nodejs-affiliate-dev:
+    image: docker.indianic.com/artisacademy/nodejs-affiliate-dev:latest
+    container_name: artis-nodejs-affiliate-dev
+    ports:
+    - 4052:4052
+
+  artis-nodejs-admin-dev:
+    image: docker.indianic.com/artisacademy/nodejs-admin-dev:latest
+    container_name: artis-nodejs-admin-dev
+    ports:
+    - 4051:4051
+
+
+  artis-nginx-dev:
+    image: docker.indianic.com/artisacademy/nginx-dev:latest
+    ports:
+      - "5006:80"
+    volumes:
+      - ./devops/public:/srv/www/static
+      - ./default-dev.conf:/etc/nginx/conf.d/default.conf
+    links:
+      - artis-nodejs-mediaprocessing-dev
+      - artis-nodejs-order-dev
+      - artis-nodejs-notification-dev
+      - artis-nodejs-course-dev
+      - artis-nodejs-community-dev
+      - artis-nodejs-auth-dev
+      - artis-nodejs-affiliate-dev
+      - artis-nodejs-admin-dev
