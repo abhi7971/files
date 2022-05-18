@@ -1,0 +1,19 @@
+stages:
+   - deploy
+
+
+deploy:
+
+    stage: deploy
+    tags:
+        - shell-exec
+    artifacts:
+      paths:
+        - dist/build/    
+        
+    script:
+        
+       - sshpass -p 'indianic' ssh -o StrictHostKeyChecking=no -o PreferredAuthentications=password -o PubkeyAuthentication=no indianic@10.2.99.128 "cd /home/indianic/test/reactjs && git pull origin production && sh deploy.sh"
+#       - ssh-add <(echo "$PROD_PRIVATE_KEY")
+#       - ssh -p22 treblesun@72.167.46.243 "pwd"
+#       - scp -r /home/indianic/test/reactjs/dist/build/* treblesun@72.167.46.243:/home/treblesun/public_html/build
