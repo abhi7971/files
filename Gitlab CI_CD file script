@@ -1,0 +1,172 @@
+### Docker & GITLAB *****
+
+include:
+  - template: Workflows/MergeRequest-Pipelines.gitlab-ci.yml
+  - template: Security/SAST.gitlab-ci.yml
+  - template: Dependency-Scanning.gitlab-ci.yml
+  - template: Jobs/Secret-Detection.gitlab-ci.yml
+  - template: Container-Scanning.gitlab-ci.yml
+  - template: Code-Quality.gitlab-ci.yml
+  - project: "auden/infrastructure/gitlab-ci-templates"
+    ref: master
+    file: ".auden-default.yml"
+
+stages:
+  - build
+  - test
+  - scan
+
+variables:
+  DOCKER_HOST: tcp://docker:2376
+  DOCKER_TLS_CERTDIR: "/certs"
+  DOCKER_TLS_VERIFY: 1
+  DOCKER_CERT_PATH: "$DOCKER_TLS_CERTDIR/client"
+
+################
+###  Build   ###
+################
+
+build_docker_gitlab:
+  image: docker:19.03.12
+  stage: build
+  tags:
+    - privileged
+  services:
+    - docker:19.03.12-dind
+  variables:
+    IMAGE: $CI_REGISTRY_IMAGE/$CI_COMMIT_REF_SLUG:$CI_COMMIT_SHA
+    DOCKER_TLS_CERTDIR: "/certs"
+  script:
+    - docker info
+    - docker login -u "$CI_REGISTRY_USER" -p "$CI_REGISTRY_PASSWORD" $CI_REGISTRY
+    - docker build -t $IMAGE .
+    - docker push $IMAGE
+
+build-docker-gcr:
+  image: google/cloud-sdk:latest
+  variables:
+    GCR_URL: eu.gcr.io/auden-shared-services16907
+  stage: build
+  tags:
+    - privileged
+  services:
+    - docker:19.03.13-dind
+  script:
+    - export VERSION=$CI_COMMIT_SHORT_SHA
+    - set -e
+    - gcloud auth activate-service-account gitlab-gcr-svc@auden-shared-services16907.iam.gserviceaccount.com --key-file $GCP_AUDEN_GCR_SVC
+    - gcloud --quiet auth configure-docker
+    - docker build . -t $GCR_URL/$CI_PROJECT_PATH:$VERSION
+    - docker push $GCR_URL/$CI_PROJECT_PATH:$VERSION
+    - rm -f service-account.json
+
+
+################
+###   Test   ###
+################
+
+# Gitlab Security testing
+code_quality:
+  rules:
+    - if: '$CODE_QUALITY_DISABLED'
+      when: never
+    - if: '$CI_PIPELINE_SOURCE == "merge_request_event"' # Run code quality job in merge request pipelines
+    - if: '$CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH'      # Run code quality job in pipelines on the master branch (but not in other branch pipelines)
+    - if: '$CI_COMMIT_TAG'                               # Run code quality job in pipelines for tags
+
+gemnasium-dependency_scanning:
+  rules:
+    - if: $DEPENDENCY_SCANNING_DISABLED
+      when: never
+    - if: $CI_MERGE_REQUEST_IID &&
+        $GITLAB_FEATURES =~ /\bdependency_scanning\b/ &&
+        $DS_DEFAULT_ANALYZERS =~ /gemnasium([^-]|$)/
+      exists:
+        - '{Gemfile.lock,*/Gemfile.lock,*/*/Gemfile.lock}'
+        - '{composer.lock,*/composer.lock,*/*/composer.lock}'
+        - '{gems.locked,*/gems.locked,*/*/gems.locked}'
+        - '{go.sum,*/go.sum,*/*/go.sum}'
+        - '{npm-shrinkwrap.json,*/npm-shrinkwrap.json,*/*/npm-shrinkwrap.json}'
+        - '{package-lock.json,*/package-lock.json,*/*/package-lock.json}'
+        - '{yarn.lock,*/yarn.lock,*/*/yarn.lock}'
+        - '{packages.lock.json,*/packages.lock.json,*/*/packages.lock.json}'
+        - '{conan.lock,*/conan.lock,*/*/conan.lock}'
+
+secret_detection:
+  extends: .secret-analyzer
+  rules:
+    - if: $SECRET_DETECTION_DISABLED
+      when: never
+    - if: $CI_MERGE_REQUEST_IID
+
+gosec-sast:
+  rules:
+    - if: $SAST_DISABLED
+      when: never
+    - if: $CI_MERGE_REQUEST_IID &&
+        $SAST_DEFAULT_ANALYZERS =~ /gosec/
+      exists:
+        - '**/*.go'
+
+container_scanning:
+  rules:
+    - if: $CONTAINER_SCANNING_DISABLED
+      when: never
+    - if: $CI_MERGE_REQUEST_IID &&
+        $GITLAB_FEATURES =~ /\bcontainer_scanning\b/
+    - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH &&
+        $GITLAB_FEATURES =~ /\bcontainer_scanning\b/
+
+
+test_go_unit:
+  image: golang:1.16
+  stage: test
+  tags:
+    - auden
+  script:
+    - go get -u github.com/jstemmer/go-junit-report
+    - go test -v -coverpkg=./... -coverprofile=coverage.out -tags=unittest ./internal/... | go-junit-report -set-exit-code > report.xml
+    - go tool cover -func coverage.out
+  coverage: '/total:\s+\(statements\)\s+(\d+.\d+\%)/'
+  artifacts:
+    when: always
+    reports:
+      junit: report.xml
+    paths:
+      - coverage.out
+
+
+sonarcloud-check:
+  tags:
+    - auden
+  stage: scan
+  image:
+    name: sonarsource/sonar-scanner-cli:latest
+    entrypoint: [""]
+  variables:
+    SONAR_USER_HOME: "${CI_PROJECT_DIR}/.sonar"
+    GIT_DEPTH: "0"
+    SONAR_EXTRA_PARAMS: ""
+  cache:
+    key: "${CI_JOB_NAME}"
+    paths:
+      - .sonar/cache
+  script:
+    - >
+      sonar-scanner
+      -Dsonar.projectKey=auden_${CI_PROJECT_NAME}
+      -Dsonar.organization=${SONAR_ORGANISATION}
+      -Dsonar.qualitygate.wait=true
+      -Dsonar.c.file.suffixes=-
+      -Dsonar.cpp.file.suffixes=-
+      -Dsonar.objc.file.suffixes=-
+      -Dsonar.tests=.
+      -Dsonar.test.inclusions=**/*_test.go
+      -Dsonar.go.coverage.reportPaths=coverage.out
+      -Dsonar.junit.reportPaths=test.xml
+      -Dsonar.sources=.
+      -Dsonar.exclusions=**/*_test.go
+      -Dsonar.verbose=true
+  allow_failure: true
+  dependencies:
+    - test_go_unit
